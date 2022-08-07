@@ -4,7 +4,6 @@ import {
   ref,
   onMounted,
   onUnmounted,
-  watchEffect,
   watch,
   WatchStopHandle,
   inject,
@@ -149,7 +148,7 @@ function createSandbox() {
 
   sandbox.addEventListener('load', () => {
     proxy.handle_links()
-    stopUpdateWatcher = watchEffect(updatePreview)
+    stopUpdateWatcher = watch(() => store.state.activeFile, updatePreview, { immediate: true, deep: true })
   })
 }
 
@@ -182,21 +181,31 @@ async function updatePreview() {
         `[@vue/repl] successfully compiled ${ssrModules.length} modules for SSR.`
       )
       await proxy.eval([
-        `const __modules__ = {};`,
-        ...ssrModules,
-        `import { renderToString as _renderToString } from 'vue/server-renderer'
-         import { createSSRApp as _createApp } from 'vue'
-         const AppComponent = __modules__["${mainFile}"].default
-         AppComponent.name = 'Repl'
-         const app = _createApp(AppComponent)
-         app.config.unwrapInjectedRef = true
-         app.config.warnHandler = () => {}
-         window.__ssr_promise__ = _renderToString(app).then(html => {
-           document.body.innerHTML = '<div id="app">' + html + '</div>'
-         }).catch(err => {
-           console.error("SSR Error", err)
-         })
-        `
+          ...getScriptWithMode(`const __modules__ = {};`, 'module'),
+          ...getScriptWithMode(ssrModules, 'module'),
+          ...getScriptWithMode(`import { renderToString as _renderToString } from 'vue/server-renderer'
+           import { createSSRApp as _createApp } from 'vue'
+           new Promise((resolve) => {
+              const int_id = setInterval(() => {
+                const app = __modules__["${mainFile}"].default
+                if(app) {
+                  
+                  clearInterval(int_id)
+                  resolve(app)
+                }
+              }, 200)
+            }).then(AppComponent => {
+              AppComponent.name = 'Repl'
+              const app = _createApp(AppComponent)
+              app.config.unwrapInjectedRef = true
+              app.config.warnHandler = () => {}
+              window.__ssr_promise__ = _renderToString(app).then(html => {
+                document.body.innerHTML = '<div id="app">' + html + '</div>'
+              }).catch(err => {
+                console.error("SSR Error", err)
+              })
+           })
+          `, 'module')
       ])
     }
 
@@ -205,21 +214,30 @@ async function updatePreview() {
     console.log(`[@vue/repl] successfully compiled ${modules.length} modules.`)
 
     const codeToEval = [
-      `window.__modules__ = {};window.__css__ = '';` +
+      ...getScriptWithMode(`window.__modules__ = {};window.__css__ = '';` +
         `if (window.__app__) window.__app__.unmount();` +
-        (isSSR ? `` : `document.body.innerHTML = '<div id="app"></div>'`),
-      ...modules,
-      `document.getElementById('__sfc-styles').innerHTML = window.__css__`
+        (isSSR ? `` : `document.body.innerHTML = '<div id="app"></div>'`), 'text/javascript'),
+      ...getScriptWithMode(modules, 'module'),
+      ...getScriptWithMode(`document.getElementById('__sfc-styles').innerHTML = window.__css__`, 'text/javascript')
     ]
 
     // if main file is a vue file, mount it.
     if (mainFile.endsWith('.vue')) {
       codeToEval.push(
-        `import { ${
+        ...getScriptWithMode(`import { ${
           isSSR ? `createSSRApp` : `createApp`
         } as _createApp } from "vue"
-        const _mount = () => {
-          const AppComponent = __modules__["${mainFile}"].default
+        const _mount = async () => {
+          const AppComponent = await new Promise((resolve) => {
+            const int_id = setInterval(() => {
+              const app = __modules__["${mainFile}"].default
+              if(app) {
+                
+                clearInterval(int_id)
+                resolve(app)
+              }
+            }, 200)
+          })
           AppComponent.name = 'Repl'
           const app = window.__app__ = _createApp(AppComponent)
           app.config.unwrapInjectedRef = true
@@ -230,7 +248,7 @@ async function updatePreview() {
           window.__ssr_promise__.then(_mount)
         } else {
           _mount()
-        }`
+        }`, 'module')
       )
     }
 
@@ -239,6 +257,15 @@ async function updatePreview() {
   } catch (e: any) {
     runtimeError.value = (e as Error).message
   }
+}
+function getScriptWithMode(script: string | string[], mode = 'module') {
+  if (typeof script === 'string') script = [script]
+  return script.map(one => {
+    return {
+      code: one,
+      mode,
+    }
+  })
 }
 </script>
 

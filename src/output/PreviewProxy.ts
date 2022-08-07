@@ -86,7 +86,7 @@ export class PreviewProxy {
     }
   }
 
-  eval(script: string | string[]) {
+  eval(script: any | any[]) {
     return this.iframe_command('eval', { script })
   }
 

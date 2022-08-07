@@ -14,6 +14,7 @@
 
 				window.process = { env: {} }
 				window.__modules__ = {}
+                window.__scriptLoadLocked = false
 
 				window.__export__ = (mod, key, get) => {
 					Object.defineProperty(mod, key, {
@@ -35,6 +36,14 @@
 					const send_error = (message, stack) => send_reply({ action: 'cmd_error', message, stack });
 
 					if (action === 'eval') {
+                        await new Promise(resolve => {
+                          const int_id = setInterval(() => {
+                            if (!window.__scriptLoadLocked) {
+                              clearInterval(int_id)
+                              resolve()
+                            }
+                          }, 100)
+                        })
 						try {
 							if (scriptEls.length) {
 								scriptEls.forEach(el => {
@@ -46,20 +55,26 @@
 							let { script: scripts } = ev.data.args
 							if (typeof scripts === 'string') scripts = [scripts]
 
+                            window.__scriptLoadLocked = true
+                          
 							for (const script of scripts) {
+                                const { code = '', mode = 'module' } = script
 								const scriptEl = document.createElement('script')
-								scriptEl.setAttribute('type', 'module')
+                              
+                                // MARK type ‘module’ With “es-module-shims” will cause normal script run two times and wrong order.
+								scriptEl.setAttribute('type', mode)
 								// send ok in the module script to ensure sequential evaluation
 								// of multiple proxy.eval() calls
 								const done = new Promise((resolve) => {
 									window.__next__ = resolve
 								})
-								scriptEl.innerHTML = script + `\nwindow.__next__()`
+								scriptEl.innerHTML = code + `\nwindow.__next__()`
 								document.head.appendChild(scriptEl)
 								scriptEl.onerror = err => send_error(err.message, err.stack)
 								scriptEls.push(scriptEl)
 								await done
 							}
+                            window.__scriptLoadLocked = false
 							send_ok()
 						} catch (e) {
 							send_error(e.message, e.stack);
@@ -250,7 +265,7 @@
 		</script>
 
 		<!-- ES Module Shims: Import maps polyfill for modules browsers without import maps support (all except Chrome 89+) -->
-		<script async src="https://unpkg.com/es-module-shims@1.5.5/dist/es-module-shims.wasm.js"></script>
+		<script async src="https://unpkg.com/es-module-shims@1.5.13/dist/es-module-shims.wasm.js"></script>
 		<script type="importmap"><!--IMPORT_MAP--></script>
 	</head>
 	<body></body>
